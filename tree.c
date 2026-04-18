@@ -15,6 +15,8 @@
 #include <string.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include "index.h"
+int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out);
 
 // ─── Mode Constants ─────────────────────────────────────────────────────────
 
@@ -146,45 +148,56 @@ int tree_serialize(const Tree *tree, void **data_out, size_t *len_out)
 // Returns 0 on success, -1 on error.
 int tree_from_index(ObjectID *id_out)
 {
+    // Step 1: Load index
     Index index;
     if (index_load(&index) != 0)
         return -1;
 
+    // Step 2: Initialize tree
     Tree tree;
     memset(&tree, 0, sizeof(Tree));
+
+    // Step 3: Convert index entries → tree entries
     for (int i = 0; i < index.count; i++)
     {
         const char *path = index.entries[i].path;
 
-        // skip nested paths (keep it simple)
-        if (strchr(path, '/'))
+        // Skip nested directories (simplified version)
+        if (!path || strchr(path, '/'))
             continue;
 
-        TreeEntry *entry = &tree.entries[tree.count++];
+        // Prevent overflow
+        if (tree.count >= MAX_TREE_ENTRIES)
+            return -1;
+
+        TreeEntry *entry = &tree.entries[tree.count];
 
         entry->mode = index.entries[i].mode;
-        strcpy(entry->name, path);
-        entry->hash = index.entries[i].hash;
-    }
-    if (tree.count >= MAX_TREE_ENTRIES)
-        return -1;
 
-    strncpy(entry->name, path, sizeof(entry->name) - 1);
-    entry->name[sizeof(entry->name) - 1] = '\0';
-    void *data;
-    size_t len;
+        // Safe copy of filename
+        strncpy(entry->name, path, sizeof(entry->name) - 1);
+        entry->name[sizeof(entry->name) - 1] = '\0';
+
+        entry->hash = index.entries[i].hash;
+
+        tree.count++;
+    }
+
+    // Step 4: Serialize tree
+    void *data = NULL;
+    size_t len = 0;
 
     if (tree_serialize(&tree, &data, &len) != 0)
         return -1;
 
+    // Step 5: Store tree object
     if (object_write(OBJ_TREE, data, len, id_out) != 0)
     {
         free(data);
         return -1;
     }
 
+    // Step 6: Cleanup and return
     free(data);
     return 0;
-
-    return -1; // incomplete
 }
