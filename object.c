@@ -104,11 +104,6 @@ int object_exists(const ObjectID *id)
 // Returns 0 on success, -1 on error.
 int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out)
 {
-    // TODO: Implement
-    (void)type;
-    (void)data;
-    (void)len;
-    (void)id_out;
     // Step 1: Build the header string
     const char *type_str;
     switch (type)
@@ -148,7 +143,6 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
         return 0; // Object already exists, nothing to do
     }
 
-    // TODO: Continue with file writing in next commit
     // Step 4: Get the target path and create shard directory
     char path[512];
     object_path(id_out, path, sizeof(path));
@@ -184,19 +178,23 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
         return -1;
     }
 
-    // TODO: Add fsync and atomic rename in next commit
-    // flush file to disk
-    fsync(fd);
+    // Step 6: Flush to disk before rename
+    if (fsync(fd) != 0)
+    {
+        close(fd);
+        unlink(temp_path);
+        return -1;
+    }
     close(fd);
 
-    // atomic rename to final path
+    // Step 7: Atomic rename to final path
     if (rename(temp_path, path) != 0)
     {
         unlink(temp_path);
         return -1;
     }
 
-    // fsync the directory (important for persistence)
+    // Step 8: Sync the directory to persist the rename
     int dir_fd = open(shard_dir, O_RDONLY);
     if (dir_fd >= 0)
     {
@@ -231,79 +229,110 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
 // Returns 0 on success, -1 on error (file not found, corrupt, etc.).
 int object_read(const ObjectID *id, ObjectType *type_out, void **data_out, size_t *len_out)
 {
-    // TODO: Implement
-    (void)id;
-    (void)type_out;
-    (void)data_out;
-    (void)len_out;
+    // Step 1: Get the file path
     char path[512];
     object_path(id, path, sizeof(path));
 
+    // Step 2: Open and read the entire file
     FILE *f = fopen(path, "rb");
     if (!f)
         return -1;
 
+    // Get file size
     fseek(f, 0, SEEK_END);
-    long size = ftell(f);
-    rewind(f);
+    long file_size = ftell(f);
+    fseek(f, 0, SEEK_SET);
 
-    uint8_t *buffer = malloc(size);
-    if (!buffer)
+    if (file_size <= 0)
     {
         fclose(f);
         return -1;
     }
 
-    if (fread(buffer, 1, size, f) != (size_t)size)
+    // Read entire file into buffer
+    uint8_t *file_data = malloc(file_size);
+    if (!file_data)
     {
-        free(buffer);
+        fclose(f);
+        return -1;
+    }
+
+    if (fread(file_data, 1, file_size, f) != (size_t)file_size)
+    {
+        free(file_data);
         fclose(f);
         return -1;
     }
     fclose(f);
 
-    // verify hash
-    ObjectID check;
-    compute_hash(buffer, size, &check);
-
-    if (memcmp(check.hash, id->hash, HASH_SIZE) != 0)
-    {
-        free(buffer);
-        return -1;
-    }
-
-    // parse header
-    char *null_pos = memchr(buffer, '\0', size);
+    // Step 3: Parse the header
+    // Find the null byte separating header from data
+    uint8_t *null_pos = memchr(file_data, '\0', file_size);
     if (!null_pos)
     {
-        free(buffer);
+        free(file_data);
         return -1;
     }
 
-    size_t header_len = null_pos - (char *)buffer + 1;
+    // Parse type and size from header
+    char type_str[16];
+    size_t data_size;
+    if (sscanf((char *)file_data, "%15s %zu", type_str, &data_size) != 2)
+    {
+        free(file_data);
+        return -1;
+    }
 
-    // determine type
-    if (strncmp((char *)buffer, "blob", 4) == 0)
+    // Map type string to ObjectType
+    if (strcmp(type_str, "blob") == 0)
+    {
         *type_out = OBJ_BLOB;
-    else if (strncmp((char *)buffer, "tree", 4) == 0)
+    }
+    else if (strcmp(type_str, "tree") == 0)
+    {
         *type_out = OBJ_TREE;
-    else if (strncmp((char *)buffer, "commit", 6) == 0)
+    }
+    else if (strcmp(type_str, "commit") == 0)
+    {
         *type_out = OBJ_COMMIT;
+    }
     else
     {
-        free(buffer);
+        free(file_data);
         return -1;
     }
 
-    // extract data
-    size_t data_len = size - header_len;
-    void *data = malloc(data_len);
+    // Step 4: Verify integrity - recompute hash and compare
+    ObjectID computed_id;
+    compute_hash(file_data, file_size, &computed_id);
 
-    memcpy(data, buffer + header_len, data_len);
+    if (memcmp(id->hash, computed_id.hash, HASH_SIZE) != 0)
+    {
+        free(file_data);
+        return -1; // Corruption detected
+    }
 
-    *data_out = data;
-    *len_out = data_len;
+    // Step 5 & 6: Extract data portion (after null byte)
+    size_t header_len = (null_pos - file_data) + 1; // +1 to skip the null byte
+    size_t actual_data_len = file_size - header_len;
 
-    free(buffer);
+    if (actual_data_len != data_size)
+    {
+        free(file_data);
+        return -1; // Size mismatch
+    }
+
+    // Allocate and copy data
+    *data_out = malloc(actual_data_len);
+    if (!*data_out)
+    {
+        free(file_data);
+        return -1;
+    }
+
+    memcpy(*data_out, file_data + header_len, actual_data_len);
+    *len_out = actual_data_len;
+
+    free(file_data);
     return 0;
 }

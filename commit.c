@@ -236,67 +236,63 @@ int head_update(const ObjectID *new_commit)
 // Returns 0 on success, -1 on error.
 int commit_create(const char *message, ObjectID *commit_id_out)
 {
-    // Step 1: Load index
-    Index index;
-    if (index_load(&index) != 0)
-        return -1;
-
-    // Step 2: Build tree from index
+    // Step 1: Build tree from the current index
     ObjectID tree_id;
     if (tree_from_index(&tree_id) != 0)
+    {
+        fprintf(stderr, "error: failed to create tree from index\n");
         return -1;
+    }
 
-    // Step 3: Initialize commit struct
+    // Step 2: Try to read parent commit (may not exist for first commit)
     Commit commit;
-    memset(&commit, 0, sizeof(commit));
-
     commit.tree = tree_id;
 
-    // Step 4: Handle parent commit (if exists)
     ObjectID parent_id;
     if (head_read(&parent_id) == 0)
     {
-        commit.parent = parent_id;
+        // We have a parent commit
         commit.has_parent = 1;
+        commit.parent = parent_id;
     }
     else
     {
+        // First commit (no parent)
         commit.has_parent = 0;
     }
 
-    // Step 5: Author and timestamp
+    // Step 3: Fill in author and timestamp
     const char *author = pes_author();
-    if (!author)
-        author = "unknown";
-
     snprintf(commit.author, sizeof(commit.author), "%s", author);
     commit.timestamp = (uint64_t)time(NULL);
 
-    // Step 6: Commit message
+    // Step 4: Copy the commit message
     snprintf(commit.message, sizeof(commit.message), "%s", message);
 
-    // Step 7: Serialize commit
-    void *data = NULL;
-    size_t len = 0;
-
-    if (commit_serialize(&commit, &data, &len) != 0)
-        return -1;
-
-    // Step 8: Store commit object
-    ObjectID commit_id;
-    if (object_write(OBJ_COMMIT, data, len, &commit_id) != 0)
+    // Step 5: Serialize the commit to text format
+    void *commit_data;
+    size_t commit_len;
+    if (commit_serialize(&commit, &commit_data, &commit_len) != 0)
     {
-        free(data);
+        fprintf(stderr, "error: failed to serialize commit\n");
         return -1;
     }
 
-    free(data);
-
-    // Step 9: Update HEAD
-    if (head_update(&commit_id) != 0)
+    // Step 6: Write commit object to the object store
+    if (object_write(OBJ_COMMIT, commit_data, commit_len, commit_id_out) != 0)
+    {
+        free(commit_data);
+        fprintf(stderr, "error: failed to write commit object\n");
         return -1;
+    }
+    free(commit_data);
 
-    // Step 10: Return commit ID
-    *commit_id_out = commit_id;
+    // Step 7: Update HEAD to point to the new commit
+    if (head_update(commit_id_out) != 0)
+    {
+        fprintf(stderr, "error: failed to update HEAD\n");
+        return -1;
+    }
+
     return 0;
 }
