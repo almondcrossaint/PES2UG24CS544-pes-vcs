@@ -167,7 +167,33 @@ int index_load(Index *index)
     if (!f)
         return 0;
 
-    return -1; // incomplete
+    char line[1024];
+
+    while (fgets(line, sizeof(line), f))
+    {
+        IndexEntry *e = &index->entries[index->count];
+        char hash_hex[HASH_HEX_SIZE + 1];
+
+        if (sscanf(line, "%o %64s %ld %u %255[^\n]",
+                   &e->mode,
+                   hash_hex,
+                   &e->mtime_sec,
+                   &e->size,
+                   e->path) == 5)
+        {
+
+            if (hex_to_hash(hash_hex, &e->hash) != 0)
+            {
+                fclose(f);
+                return -1;
+            }
+
+            index->count++;
+        }
+    }
+
+    fclose(f);
+    return 0;
 }
 
 // Save the index to .pes/index atomically.
