@@ -177,5 +177,14 @@ int tree_from_index(ObjectID *id_out)
     if (tree_serialize(&tree, &data, &len) != 0)
         return -1;
 
+    if (object_write(OBJ_TREE, data, len, id_out) != 0)
+    {
+        free(data);
+        return -1;
+    }
+
+    free(data);
+    return 0;
+
     return -1; // incomplete
 }
