@@ -237,6 +237,9 @@ int head_update(const ObjectID *new_commit)
 int commit_create(const char *message, ObjectID *commit_id_out)
 {
     Index index;
+    ObjectID tree_id;
+    if (tree_from_index(&tree_id) != 0)
+        return -1;
     if (index_load(&index) != 0)
         return -1;
 
