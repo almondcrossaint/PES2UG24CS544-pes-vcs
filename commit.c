@@ -236,25 +236,35 @@ int head_update(const ObjectID *new_commit)
 // Returns 0 on success, -1 on error.
 int commit_create(const char *message, ObjectID *commit_id_out)
 {
+    // Step 1: Load index
     Index index;
-    ObjectID tree_id;
-    if (tree_from_index(&tree_id) != 0)
-        return -1;
     if (index_load(&index) != 0)
         return -1;
 
+    // Step 2: Build tree from index
+    ObjectID tree_id;
+    if (tree_from_index(&tree_id) != 0)
+        return -1;
+
+    // Step 3: Initialize commit struct
     Commit commit;
     memset(&commit, 0, sizeof(commit));
 
     commit.tree = tree_id;
-    commit.has_parent = 0;
+
+    // Step 4: Handle parent commit (if exists)
     ObjectID parent_id;
     if (head_read(&parent_id) == 0)
     {
         commit.parent = parent_id;
         commit.has_parent = 1;
     }
+    else
+    {
+        commit.has_parent = 0;
+    }
 
+    // Step 5: Author and timestamp
     const char *author = pes_author();
     if (!author)
         author = "unknown";
@@ -262,7 +272,31 @@ int commit_create(const char *message, ObjectID *commit_id_out)
     snprintf(commit.author, sizeof(commit.author), "%s", author);
     commit.timestamp = (uint64_t)time(NULL);
 
+    // Step 6: Commit message
     snprintf(commit.message, sizeof(commit.message), "%s", message);
 
-    return -1; // incomplete
+    // Step 7: Serialize commit
+    void *data = NULL;
+    size_t len = 0;
+
+    if (commit_serialize(&commit, &data, &len) != 0)
+        return -1;
+
+    // Step 8: Store commit object
+    ObjectID commit_id;
+    if (object_write(OBJ_COMMIT, data, len, &commit_id) != 0)
+    {
+        free(data);
+        return -1;
+    }
+
+    free(data);
+
+    // Step 9: Update HEAD
+    if (head_update(&commit_id) != 0)
+        return -1;
+
+    // Step 10: Return commit ID
+    *commit_id_out = commit_id;
+    return 0;
 }
