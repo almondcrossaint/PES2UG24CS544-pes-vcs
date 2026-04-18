@@ -152,6 +152,25 @@ int tree_from_index(ObjectID *id_out)
 
     Tree tree;
     memset(&tree, 0, sizeof(Tree));
+    for (int i = 0; i < index.count; i++)
+    {
+        const char *path = index.entries[i].path;
+
+        // skip nested paths (keep it simple)
+        if (strchr(path, '/'))
+            continue;
+
+        TreeEntry *entry = &tree.entries[tree.count++];
+
+        entry->mode = index.entries[i].mode;
+        strcpy(entry->name, path);
+        entry->hash = index.entries[i].hash;
+    }
+    if (tree.count >= MAX_TREE_ENTRIES)
+        return -1;
+
+    strncpy(entry->name, path, sizeof(entry->name) - 1);
+    entry->name[sizeof(entry->name) - 1] = '\0';
 
     return -1; // incomplete
 }
