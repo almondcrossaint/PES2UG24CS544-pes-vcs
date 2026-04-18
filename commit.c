@@ -243,5 +243,11 @@ int commit_create(const char *message, ObjectID *commit_id_out)
     if (index_load(&index) != 0)
         return -1;
 
+    Commit commit;
+    memset(&commit, 0, sizeof(commit));
+
+    commit.tree = tree_id;
+    commit.has_parent = 0;
+
     return -1; // incomplete
 }
